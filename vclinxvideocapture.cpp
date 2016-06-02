@@ -45,10 +45,6 @@ void VCLinxVideoCapture::mainThread(void *opaque)
     avpicture_fill((AVPicture *)picturePtr, rgb,
                        AV_PIX_FMT_YUV420P, width, height);
 
-
-    picturePtr->data[0] = rgb;
-    picturePtr->data[1] = rgb + picturePtr->linesize[0] * height;
-    picturePtr->data[2] = picturePtr->data[1] + picturePtr->linesize[1] * height/2;
     AVPixelFormat srcFmt;
 
     switch (fourcc) {

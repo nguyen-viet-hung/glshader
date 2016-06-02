@@ -283,6 +283,6 @@ void OpenGLWidget::initializeGL()
 
 void OpenGLWidget::receiveLocalVideoImg(VideoImage *img)
 {
-    localVideoBuffer.PushBackData(img->imgBuffer, img->width*img->height*5/4, 0, img->width, img->height);
+    localVideoBuffer.PushBackData(img->imgBuffer, img->width*img->height*3/2, 0, img->width, img->height);
     update();
 }
