@@ -19,10 +19,15 @@ SOURCES += main.cpp\
 
 HEADERS  += openglwidget.h \
     datasink.h \
-    vclinxvideocapture.h
+    vclinxvideocapture.h \
+    defines.h
 
-LIBS += -L/usr/local/lib -lpt -lh323_x86_64_ -lasound -lswscale -lavcodec -lavutil
+LIBS += -L/usr/local/lib -lpt -lh323_x86_64_ -lasound -lswscale -lavcodec -lavutil -lGLU
 
 DEFINES += GL_GLEXT_PROTOTYPES
 
 CONFIG += c++11
+
+DISTFILES += \
+    vertex.shader \
+    fragment.shader

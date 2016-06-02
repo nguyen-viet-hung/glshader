@@ -35,7 +35,7 @@ void VCLinxVideoCapture::mainThread(void *opaque)
 //    unsigned char* dstBuf[4];
 //    int dstPitches[4];
 
-    int size = avpicture_get_size(AV_PIX_FMT_RGBA, width, height);
+    int size = avpicture_get_size(AV_PIX_FMT_YUV420P, width, height);
     unsigned char* rgb = new unsigned char[size];
     // Setting up AVFrame
     AVFrame* picturePtr = av_frame_alloc();//avcodec_alloc_frame();
@@ -43,10 +43,12 @@ void VCLinxVideoCapture::mainThread(void *opaque)
 
     // Filling AVFrame with YUV420P data
     avpicture_fill((AVPicture *)picturePtr, rgb,
-                       AV_PIX_FMT_RGBA, width, height);
+                       AV_PIX_FMT_YUV420P, width, height);
 
 
     picturePtr->data[0] = rgb;
+    picturePtr->data[1] = rgb + picturePtr->linesize[0] * height;
+    picturePtr->data[2] = picturePtr->data[1] + picturePtr->linesize[1] * height/2;
     AVPixelFormat srcFmt;
 
     switch (fourcc) {
@@ -82,7 +84,7 @@ void VCLinxVideoCapture::mainThread(void *opaque)
         break;
     }
 
-    SwsContext* context = sws_getContext(width, height, srcFmt, width, height, AV_PIX_FMT_RGBA, SWS_FAST_BILINEAR, NULL, NULL, NULL);
+    SwsContext* context = sws_getContext(width, height, srcFmt, width, height, AV_PIX_FMT_YUV420P, SWS_FAST_BILINEAR, NULL, NULL, NULL);
 
 
 //    dstBuf[0] = rgb;
@@ -177,7 +179,7 @@ void VCLinxVideoCapture::mainThread(void *opaque)
         sws_scale(context, srcBuf, srcPitches, 0, height, picturePtr->data, picturePtr->linesize);
 
         img.imgBuffer = rgb;
-        img.fourcc = V4L2_PIX_FMT_RGB32;
+        img.fourcc = V4L2_PIX_FMT_YUV420;
         img.width = width;
         img.height = height;
 

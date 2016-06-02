@@ -1,33 +1,41 @@
 #include "openglwidget.h"
 #include <QDebug>
+#include <GL/glu.h>
+#include <GL/glut.h>
+#include "defines.h"
+#include <string>
+#include <fstream>
 
-void OpenGLWidget::updateTextureData (GLint tex, unsigned char* data, int w, int h)
+int CheckGLError(char *file, int line)
 {
-    glEnable (GL_TEXTURE_RECTANGLE_ARB);
-    glBindTexture (GL_TEXTURE_RECTANGLE_ARB, tex);
+    GLenum glErr;
+    int    retCode = 0;
 
-    glTexParameteri (GL_TEXTURE_RECTANGLE_ARB, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri (GL_TEXTURE_RECTANGLE_ARB, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glErr = glGetError();
+    while (glErr != GL_NO_ERROR)
+    {
+        const GLubyte* sError = gluErrorString(glErr);
 
-    glTexImage2D  (GL_TEXTURE_RECTANGLE_ARB, 0, 1, w , h, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, data);
+        if (sError)
+            qDebug() << "GL Error #" << glErr << "(" << gluErrorString(glErr) << ") " << " in File " << file << " at line: " << line;
+        else
+            qDebug() << "GL Error #" << glErr << " (no message available)" << " in File " << file << " at line: " << line;
+
+        retCode = 1;
+        glErr = glGetError();
+    }
+    return retCode;
 }
 
-void OpenGLWidget::updateTexturesFromBuffer (unsigned char* buffer, int width, int height, GLint y_plane, GLint u_plane, GLint v_plane)
+#define CHECK_GL_ERROR() CheckGLError(__FILE__, __LINE__)
+
+void OpenGLWidget::drawWithShaders(OpenGLWidget::YUVTexture* texture,
+                            float *left, float *top, float *right, float *bottom)
 {
-    glActiveTextureARB (GL_TEXTURE0_ARB);
-    glEnable (GL_TEXTURE_RECTANGLE_ARB);
-    glBindTexture (GL_TEXTURE_RECTANGLE_ARB, y_plane);
-    updateTextureData (y_plane, buffer, width, height);
+}
 
-    glActiveTextureARB (GL_TEXTURE1_ARB);
-    glEnable (GL_TEXTURE_RECTANGLE_ARB);
-    glBindTexture (GL_TEXTURE_RECTANGLE_ARB, u_plane);
-    updateTextureData (u_plane, buffer + width * height, width / 2, height / 2);
-
-    glActiveTextureARB (GL_TEXTURE2_ARB);
-    glEnable (GL_TEXTURE_RECTANGLE_ARB);
-    glBindTexture (GL_TEXTURE_RECTANGLE_ARB, v_plane);
-    updateTextureData (v_plane, buffer + width * height + (width / 2) * (height / 2), width / 2, height / 2);
+void OpenGLWidget::updateTextureFromBuffer (unsigned char* buffer, int width, int height, OpenGLWidget::YUVTexture* texture)
+{
 }
 
 void OpenGLWidget::drawLocal()
@@ -39,86 +47,195 @@ void OpenGLWidget::drawLocal()
 
     unsigned long size, width, height;
     int64_t timestamp;
+    static uint32_t clip = 0;
 
     if (localVideoBuffer.PopUpData(localVideoBufferDrawer, size, timestamp, width, height)) {
 
-        glPushMatrix ();
+        //memset(localVideoBufferDrawer + width*height, 128, width*height/4);
 
-        updateTexturesFromBuffer(localVideoBufferDrawer, width, height, local_y_plane, local_u_plane, local_v_plane);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        //bind texture with data
+        glEnable(GL_TEXTURE_2D);
 
-        glEnable (GL_FRAGMENT_PROGRAM_ARB);
-        glBindProgramARB(GL_FRAGMENT_PROGRAM_ARB, local_yuv_shader);
+        for (int idx = 0; idx < 3; idx++) {
 
-        double topy;
-        double bottomy;
-        double center_y = 0.0;
-        double center_x = 0.0;
+            if (multiTexture)
+                glActiveTextureARB(GL_TEXTURE0_ARB+idx);
 
-        topy = center_y - 1.0;
-        bottomy = center_y + 1.0;
+            uint8_t* tmp = localVideoBufferDrawer;
+            if (idx == 1)
+                tmp += width*height;
+            else if (idx == 2)
+                tmp += width*height*5/4;
 
-        glBegin (GL_QUADS);
+            glBindTexture(GL_TEXTURE_2D, textures[idx]);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, (idx > 0 ? (width/2) : width), (idx > 0 ? (height/2) : height),
+                         0, GL_RED, GL_UNSIGNED_BYTE, tmp);
 
-            glColor4f (1.0, 1.0, 1.0, 0.0);
+            glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);	// Linear Filtering
+            glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);	// Linear Filtering
+        }
 
-            glMultiTexCoord2fARB (GL_TEXTURE0_ARB, 0, height);
-            glMultiTexCoord2fARB (GL_TEXTURE1_ARB, 0, height / 2);
-            glMultiTexCoord2fARB (GL_TEXTURE2_ARB, 0, height / 2);
-            glVertex2f (center_x - 1.6, topy);
+        glUseProgram(program);
+        glUniform1i(glGetUniformLocation(program, "yTexture"), 0);
+        glUniform1i(glGetUniformLocation(program, "uTexture"), 1);
+        glUniform1i(glGetUniformLocation(program, "vTexture"), 2);
 
-            glMultiTexCoord2fARB (GL_TEXTURE0_ARB, width, height);
-            glMultiTexCoord2fARB (GL_TEXTURE1_ARB, width / 2, height / 2);
-            glMultiTexCoord2fARB (GL_TEXTURE2_ARB, width / 2, height / 2);
-            glVertex2f (center_x + 1.6, topy);
+        glBegin(GL_QUADS);
 
-            glColor4f (1.0, 1.0, 1.0, 0.0);
+        glTexCoord2f(0.0, 0.0); glVertex2d(-1.0, 1.0);
+        glTexCoord2f(0.0, 1.0); glVertex2d(-1.0, -1.0);
+        glTexCoord2f(1.0, 1.0); glVertex2d(1.0, -1.0);
+        glTexCoord2f(1.0, 0.0); glVertex2d(1.0, 1.0);
 
-            glMultiTexCoord2fARB (GL_TEXTURE0_ARB, width, 0);
-            glMultiTexCoord2fARB (GL_TEXTURE1_ARB, width / 2, 0);
-            glMultiTexCoord2fARB (GL_TEXTURE2_ARB, width / 2, 0);
-            glVertex2f (center_x + 1.6, bottomy);
+        glEnd();
 
-            glMultiTexCoord2fARB (GL_TEXTURE0_ARB, 0, 0);
-            glMultiTexCoord2fARB (GL_TEXTURE1_ARB, 0, 0);
-            glMultiTexCoord2fARB (GL_TEXTURE2_ARB, 0, 0);
-            glVertex2f (center_x - 1.6, bottomy);
-
-        glEnd ();
-
-        glDisable (GL_FRAGMENT_PROGRAM_ARB);
-
-        glActiveTextureARB (GL_TEXTURE0_ARB); glDisable (GL_TEXTURE_RECTANGLE_ARB);
-        glActiveTextureARB (GL_TEXTURE1_ARB); glDisable (GL_TEXTURE_RECTANGLE_ARB);
-        glActiveTextureARB (GL_TEXTURE2_ARB); glDisable (GL_TEXTURE_RECTANGLE_ARB);
-
-        glPopMatrix ();
+        glUseProgram(0);
+        glDisable(GL_TEXTURE_2D);
 
         glFlush();
     }
 }
 
-unsigned int OpenGLWidget::loadShader (GLuint type)
+OpenGLWidget::YUVTexture *OpenGLWidget::createYUVTexture(uint32_t fourcc, int width, int height)
 {
-    unsigned int shader_num;
-    const char* textureProgram = "!!ARBfp1.0\n"
-                                     "TEX result.color, fragment.texcoord[0], texture[0], 2D;\n"
-                                     "END\n";
+    if (width <= 0 || height <= 0)
+        return NULL;
 
-    glEnable (type);
-    glGenProgramsARB (1, &shader_num);
-    glBindProgramARB (type, shader_num);
-    glProgramStringARB (type, GL_PROGRAM_FORMAT_ASCII_ARB,
-                         strlen (textureProgram), (const GLbyte *) textureProgram);
+    OpenGLWidget::YUVTexture* textures = new OpenGLWidget::YUVTexture;
+    if (!textures)
+        return NULL;
 
-    glDisable(type);
+    memset(textures, 0, sizeof(OpenGLWidget::YUVTexture));
+    textures->fourcc = fourcc;
+    textures->width = width;
+    textures->height = height;
 
-    return shader_num;
+    switch (textures->fourcc) {
+    case MAKEFOURCC('Y', 'V', '1', '2'):
+        textures->planes = 3;
+
+        if (supports_npot) {
+            textures->textureResolutions[0].width = width;
+            textures->textureResolutions[0].height = height;
+            textures->textureResolutions[1].width = width / 2;
+            textures->textureResolutions[1].height = height / 2;
+            textures->textureResolutions[2].width = width / 2;
+            textures->textureResolutions[2].height = height / 2;
+        } else {
+            textures->textureResolutions[0].width = GetAlignedSize(width);
+            textures->textureResolutions[0].height = GetAlignedSize(height);
+            textures->textureResolutions[1].width = GetAlignedSize(width / 2);
+            textures->textureResolutions[1].height = GetAlignedSize(height / 2);
+            textures->textureResolutions[2].width = GetAlignedSize(width / 2);
+            textures->textureResolutions[2].height = GetAlignedSize(height / 2);
+        }
+
+        for (unsigned i = 0; i < textures->planes; i++) {
+
+            glGenTextures(1, &textures->textures[i]);
+            glBindTexture(GL_TEXTURE_2D, textures->textures[i]);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, textures->textureResolutions[i].width, textures->textureResolutions[i].height, 0, GL_RED, GL_UNSIGNED_BYTE, NULL); // y_pixels);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        }
+        break;
+    default:
+        delete textures;
+        textures = NULL;
+        break;
+    }
+
+    return textures;
+}
+
+void OpenGLWidget::deleteYUVTexture(OpenGLWidget::YUVTexture **texture)
+{
+    if (!(*texture))
+        return;
+
+    OpenGLWidget::YUVTexture* obj = *texture;
+    *texture = NULL;
+
+    glDeleteBuffers(1, &obj->vertexBufferObjects);
+    glDeleteBuffers(obj->planes, obj->textureBufferObjects);
+    glDeleteTextures(obj->planes, obj->textures);
+
+    delete obj;
+}
+
+void OpenGLWidget::loadFile(const char *fn, std::string &str)
+{
+    std::ifstream in(fn);
+    if(!in.is_open()){
+        return;
+    }
+    char tmp[300];
+    while(!in.eof()){
+        in.getline(tmp,300);
+        str += tmp;
+        str += "\n";
+    }// End function
+}
+
+void OpenGLWidget::loadShader ()
+{
+    glClearColor(0.5f, 0.5f, 1.0f, 0.0f);
+    glShadeModel(GL_SMOOTH);
+    glEnable(GL_DEPTH_TEST);
+
+    //create vertex shader
+    vertexShader = glCreateShader(GL_VERTEX_SHADER);
+    //create fragment shader
+    fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+
+    std::string vertexSourceCode;
+    std::string fragmentSourceCode;
+
+    loadFile("/home/devel/qt/Shader/vertex.shader", vertexSourceCode);
+    loadFile("/home/devel/qt/Shader/fragment.shader", fragmentSourceCode);
+
+    const char* adapter = vertexSourceCode.c_str();
+
+    //attach source code to shader
+    glShaderSourceARB(vertexShader, 1, &adapter, NULL);
+    adapter = fragmentSourceCode.c_str();
+    glShaderSourceARB(fragmentShader, 1, &adapter, NULL);
+
+    //compile source code
+    glCompileShaderARB(vertexShader);
+    glCompileShaderARB(fragmentShader);
+
+    //ok now, link into program
+    program = glCreateProgram();
+
+    glAttachShader(program, vertexShader);
+    CHECK_GL_ERROR();
+    glAttachShader(program, fragmentShader);
+    CHECK_GL_ERROR();
+
+    glLinkProgram(program);
+    CHECK_GL_ERROR();
+
+    glGetProgramiv(program, GL_LINK_STATUS, &linked);
+    if (!linked)
+    {
+        glDeleteObjectARB(vertexShader);
+        glDeleteShader(vertexShader);
+        glDeleteObjectARB(fragmentShader);
+        glDeleteShader(fragmentShader);
+        return;
+    }
+
+    //create texture
+    glGenTextures(3, textures);
 }
 
 OpenGLWidget::OpenGLWidget(QWidget *parent)
     : QGLWidget(parent)
     , localVideoBuffer("", 4, 1920*1080*4)
     , localVideoBufferDrawer(NULL)
+    , localYUVTexture(NULL)
 {
 }
 
@@ -128,12 +245,20 @@ OpenGLWidget::~OpenGLWidget()
         delete localVideoBufferDrawer;
         localVideoBufferDrawer = NULL;
     }
+
+    deleteYUVTexture(&localYUVTexture);
+}
+
+void OpenGLWidget::resizeGL(int w, int h)
+{
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+
+    glViewport(0, 0, w, h);
 }
 
 void OpenGLWidget::paintGL()
 {
-    glClearColor(0, 0, 0, 1);
-    glClear(GL_COLOR_BUFFER_BIT);
     drawLocal();
 }
 
@@ -142,20 +267,15 @@ void OpenGLWidget::initializeGL()
     initializeGLFunctions();
     showFullScreen();
 
-    glGenTextures (1, &local_y_plane);
-    glGenTextures (1, &local_u_plane);
-    glGenTextures (1, &local_v_plane);
+    const char *extensions = (const char *)glGetString(GL_EXTENSIONS);
 
-    glEnable (GL_BLEND);
-    glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    supports_npot = HasExtension(extensions, "GL_ARB_texture_non_power_of_two") ||
+            HasExtension(extensions, "GL_APPLE_texture_2D_limited_npot");
 
-    local_yuv_shader = loadShader(GL_FRAGMENT_PROGRAM_ARB);
+    multiTexture = HasExtension(extensions, "GL_ARB_multitexture");
     localVideoBufferDrawer = new unsigned char[1920*1080*4];
 
-    qDebug() << "local y texture = " << local_y_plane;
-    qDebug() << "local u texture = " << local_u_plane;
-    qDebug() << "local v texture = " << local_v_plane;
-    qDebug() << "local yuv shader = " << local_yuv_shader;
+    loadShader();
 
     connect(&videoCapturer, SIGNAL(sendCapturedImg(VideoImage*)), this, SLOT(receiveLocalVideoImg(VideoImage*)));
     videoCapturer.openDevice(0);
@@ -164,5 +284,5 @@ void OpenGLWidget::initializeGL()
 void OpenGLWidget::receiveLocalVideoImg(VideoImage *img)
 {
     localVideoBuffer.PushBackData(img->imgBuffer, img->width*img->height*5/4, 0, img->width, img->height);
-    updateGL();
+    update();
 }
