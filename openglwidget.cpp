@@ -1,7 +1,7 @@
 #include "openglwidget.h"
 #include <QDebug>
 #include <GL/glu.h>
-#include <GL/glut.h>
+#include <GL/glx.h>
 #include "defines.h"
 #include <string>
 #include <fstream>
@@ -29,15 +29,6 @@ int CheckGLError(char *file, int line)
 
 #define CHECK_GL_ERROR() CheckGLError(__FILE__, __LINE__)
 
-void OpenGLWidget::drawWithShaders(OpenGLWidget::YUVTexture* texture,
-                            float *left, float *top, float *right, float *bottom)
-{
-}
-
-void OpenGLWidget::updateTextureFromBuffer (unsigned char* buffer, int width, int height, OpenGLWidget::YUVTexture* texture)
-{
-}
-
 void OpenGLWidget::drawLocal()
 {
     if (!localVideoBufferDrawer)
@@ -45,17 +36,19 @@ void OpenGLWidget::drawLocal()
 
     //qDebug() << "Draw local now";
 
-    unsigned long size, width, height;
+    unsigned long size, w, h;
     int64_t timestamp;
-    static uint32_t clip = 0;
 
-    if (localVideoBuffer.PopUpData(localVideoBufferDrawer, size, timestamp, width, height)) {
+    if (localVideoBuffer.PopUpData(localVideoBufferDrawer, size, timestamp, w, h)) {
 
         //memset(localVideoBufferDrawer + width*height, 128, width*height/4);
 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         //bind texture with data
         glEnable(GL_TEXTURE_2D);
+
+//        if (support_vsync)
+//            glXSwapIntervalMESA(1);
 
         for (int idx = 0; idx < 3; idx++) {
 
@@ -64,16 +57,18 @@ void OpenGLWidget::drawLocal()
 
             uint8_t* tmp = localVideoBufferDrawer;
             if (idx == 1)
-                tmp += width*height;
+                tmp += w*h;
             else if (idx == 2)
-                tmp += width*height*5/4;
+                tmp += w*h*5/4;
 
             glBindTexture(GL_TEXTURE_2D, textures[idx]);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, (idx > 0 ? (width/2) : width), (idx > 0 ? (height/2) : height),
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, (idx > 0 ? (w/2) : w), (idx > 0 ? (h/2) : h),
                          0, GL_RED, GL_UNSIGNED_BYTE, tmp);
 
-            glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);	// Linear Filtering
-            glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);	// Linear Filtering
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);	// Linear Filtering
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);	// Linear Filtering
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         }
 
         glUseProgram(program);
@@ -83,85 +78,48 @@ void OpenGLWidget::drawLocal()
 
         glBegin(GL_QUADS);
 
-        glTexCoord2f(0.0, 0.0); glVertex2d(-1.0, 1.0);
-        glTexCoord2f(0.0, 1.0); glVertex2d(-1.0, -1.0);
-        glTexCoord2f(1.0, 1.0); glVertex2d(1.0, -1.0);
-        glTexCoord2f(1.0, 0.0); glVertex2d(1.0, 1.0);
+        if (stretchScreen) {
+            glTexCoord2f(0.0, 0.0); glVertex2d(-1.0, 1.0);
+            glTexCoord2f(0.0, 1.0); glVertex2d(-1.0, -1.0);
+            glTexCoord2f(1.0, 1.0); glVertex2d(1.0, -1.0);
+            glTexCoord2f(1.0, 0.0); glVertex2d(1.0, 1.0);
+        } else {
+
+            float i_ratio = (float)w / (float)h;
+            float s_ratio = (float)width() / (float)height();
+
+            float offset;
+
+            if (i_ratio > s_ratio) {
+                offset = (1.0 - (float)width()/(i_ratio*height())) / 2.0;
+                glTexCoord2f(0.0, 0.0); glVertex2d(-1.0, 1.0 - offset);
+                glTexCoord2f(0.0, 1.0); glVertex2d(-1.0, -1.0 + offset);
+                glTexCoord2f(1.0, 1.0); glVertex2d(1.0, -1.0 + offset);
+                glTexCoord2f(1.0, 0.0); glVertex2d(1.0, 1.0 - offset);
+            } else if (i_ratio < s_ratio) {
+                offset = (1.0 - (i_ratio*height())/((float)width())) / 2.0;
+                glTexCoord2f(0.0, 0.0); glVertex2d(-1.0 + offset, 1.0);
+                glTexCoord2f(0.0, 1.0); glVertex2d(-1.0 + offset, -1.0);
+                glTexCoord2f(1.0, 1.0); glVertex2d(1.0 - offset, -1.0);
+                glTexCoord2f(1.0, 0.0); glVertex2d(1.0 - offset, 1.0);
+            } else {
+                glTexCoord2f(0.0, 0.0); glVertex2d(-1.0, 1.0);
+                glTexCoord2f(0.0, 1.0); glVertex2d(-1.0, -1.0);
+                glTexCoord2f(1.0, 1.0); glVertex2d(1.0, -1.0);
+                glTexCoord2f(1.0, 0.0); glVertex2d(1.0, 1.0);
+            }
+        }
 
         glEnd();
 
         glUseProgram(0);
         glDisable(GL_TEXTURE_2D);
 
+//        if (support_vsync)
+//            glXSwapIntervalMESA(0);
+
         glFlush();
     }
-}
-
-OpenGLWidget::YUVTexture *OpenGLWidget::createYUVTexture(uint32_t fourcc, int width, int height)
-{
-    if (width <= 0 || height <= 0)
-        return NULL;
-
-    OpenGLWidget::YUVTexture* textures = new OpenGLWidget::YUVTexture;
-    if (!textures)
-        return NULL;
-
-    memset(textures, 0, sizeof(OpenGLWidget::YUVTexture));
-    textures->fourcc = fourcc;
-    textures->width = width;
-    textures->height = height;
-
-    switch (textures->fourcc) {
-    case MAKEFOURCC('Y', 'V', '1', '2'):
-        textures->planes = 3;
-
-        if (supports_npot) {
-            textures->textureResolutions[0].width = width;
-            textures->textureResolutions[0].height = height;
-            textures->textureResolutions[1].width = width / 2;
-            textures->textureResolutions[1].height = height / 2;
-            textures->textureResolutions[2].width = width / 2;
-            textures->textureResolutions[2].height = height / 2;
-        } else {
-            textures->textureResolutions[0].width = GetAlignedSize(width);
-            textures->textureResolutions[0].height = GetAlignedSize(height);
-            textures->textureResolutions[1].width = GetAlignedSize(width / 2);
-            textures->textureResolutions[1].height = GetAlignedSize(height / 2);
-            textures->textureResolutions[2].width = GetAlignedSize(width / 2);
-            textures->textureResolutions[2].height = GetAlignedSize(height / 2);
-        }
-
-        for (unsigned i = 0; i < textures->planes; i++) {
-
-            glGenTextures(1, &textures->textures[i]);
-            glBindTexture(GL_TEXTURE_2D, textures->textures[i]);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, textures->textureResolutions[i].width, textures->textureResolutions[i].height, 0, GL_RED, GL_UNSIGNED_BYTE, NULL); // y_pixels);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        }
-        break;
-    default:
-        delete textures;
-        textures = NULL;
-        break;
-    }
-
-    return textures;
-}
-
-void OpenGLWidget::deleteYUVTexture(OpenGLWidget::YUVTexture **texture)
-{
-    if (!(*texture))
-        return;
-
-    OpenGLWidget::YUVTexture* obj = *texture;
-    *texture = NULL;
-
-    glDeleteBuffers(1, &obj->vertexBufferObjects);
-    glDeleteBuffers(obj->planes, obj->textureBufferObjects);
-    glDeleteTextures(obj->planes, obj->textures);
-
-    delete obj;
 }
 
 void OpenGLWidget::loadFile(const char *fn, std::string &str)
@@ -235,7 +193,7 @@ OpenGLWidget::OpenGLWidget(QWidget *parent)
     : QGLWidget(parent)
     , localVideoBuffer("", 4, 1920*1080*4)
     , localVideoBufferDrawer(NULL)
-    , localYUVTexture(NULL)
+    , stretchScreen(false)
 {
 }
 
@@ -245,8 +203,6 @@ OpenGLWidget::~OpenGLWidget()
         delete localVideoBufferDrawer;
         localVideoBufferDrawer = NULL;
     }
-
-    deleteYUVTexture(&localYUVTexture);
 }
 
 void OpenGLWidget::resizeGL(int w, int h)
@@ -273,6 +229,9 @@ void OpenGLWidget::initializeGL()
             HasExtension(extensions, "GL_APPLE_texture_2D_limited_npot");
 
     multiTexture = HasExtension(extensions, "GL_ARB_multitexture");
+
+    support_vsync = HasExtension(extensions, "GLX_MESA_swap_control");
+
     localVideoBufferDrawer = new unsigned char[1920*1080*4];
 
     loadShader();
